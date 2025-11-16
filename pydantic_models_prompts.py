@@ -137,3 +137,99 @@ fallback_education_prompt = PromptTemplate(
              "ANSWER:\n",
     input_variables=["resume"],
 )
+
+
+# --------------------------------------------------------------------------------------------------------------- #
+# Updated models for compatibility with newer LangChain versions
+class EducationV2(BaseModel):
+    """Education qualification"""
+    qualification: str = Field(description="university or high-school education qualification or degree")
+    establishment: Optional[str] = Field(description="establishment where the qualification was obtained")
+    country: Optional[str] = Field(description="country where the qualification was obtained")
+    year: Optional[str] = Field(description="year when the qualification was obtained")
+
+
+class WorkExperienceV2(BaseModel):
+    """Work experiences"""
+    company_name: str = Field(description="name of the company")
+    job_title: str = Field(description="job title")
+    start_date: str = Field(description="start date, if not present use 'None'")
+    end_date: str = Field(description="end date, if not present use 'None'")
+    description: Optional[str] = Field(description="description, if not present use 'None' ")
+
+
+# Alternative prompt templates for better compatibility
+alternative_skills_prompt = """
+Please extract the following information from the resume:
+
+TECHNICAL SKILLS: Extract all technical skills, programming languages, IT tools, and software skills.
+
+PROFESSIONAL DEVELOPMENT: Extract certifications (excluding university degrees), research publications, awards, open source contributions, or patents.
+
+OTHER INFORMATION: Extract language skills, interests, hobbies, and extra-curricular activities.
+
+Return the results as a JSON object with the following structure:
+{
+    "skills": ["list", "of", "skills"],
+    "professional_development": ["list", "of", "certifications", "awards"],
+    "other_info": ["list", "of", "languages", "hobbies"]
+}
+
+RESUME:
+{resume}
+"""
+
+alternative_basic_info_prompt = """
+Extract the following basic information from the resume:
+
+- Name of the candidate
+- Bio, profile, introduction or summary
+- Current or latest job title
+- Location (if available)
+- Phone number (if available)
+
+Return the results as a JSON object with the following structure:
+{
+    "name": "Candidate Name",
+    "bio": "Candidate bio/summary",
+    "job_title": "Current job title",
+    "location": "Location if available",
+    "phone": "Phone number if available"
+}
+
+RESUME:
+{resume}
+"""
+
+alternative_work_experience_prompt = """
+Extract work experience information for {company} as {role}.
+
+Return as JSON with:
+{{
+    "company_name": "{company}",
+    "job_title": "{role}",
+    "start_date": "start date or None",
+    "end_date": "end date or None", 
+    "description": "job description or None"
+}}
+
+RESUME:
+{resume}
+"""
+
+alternative_education_prompt = """
+Extract all education qualifications from the resume.
+
+Return as a list of JSON objects with:
+[
+    {{
+        "qualification": "degree name",
+        "establishment": "school/university name", 
+        "country": "country if available",
+        "year": "year if available"
+    }}
+]
+
+RESUME:
+{resume}
+"""
