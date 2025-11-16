@@ -12,7 +12,7 @@ import openai
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 from langchain.chains.openai_tools import create_extraction_chain_pydantic
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from openai import OpenAI
 
 import threading
