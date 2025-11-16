@@ -11,7 +11,7 @@ import docx
 import openai
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
-from langchain.chains.openai_tools import create_extraction_chain_pydantic
+from langchain.chains import create_extraction_chain
 from langchain_openai import ChatOpenAI
 from openai import OpenAI
 
@@ -47,10 +47,10 @@ class ResumeManager:
     def process_file(self):
         all_threads = []
         for target in [
-            self.extract_work_experience(),
-            self.extract_basic_info(),
-            self.extract_education(),
-            self.extract_skills()
+            self.extract_work_experience,
+            self.extract_basic_info,
+            self.extract_education,
+            self.extract_skills
         ]:
             thread = threading.Thread(target=target)
             all_threads.append(thread)
@@ -59,10 +59,22 @@ class ResumeManager:
         for thread in all_threads:
             thread.join()
 
-    def extract_pydantic(self, target):
+    def extract_pydantic(self, target_schema):
         start = time.time()
-        chain = create_extraction_chain_pydantic(target, self.model)
-
+        # Use the standard extraction chain instead of pydantic-specific one
+        schema = {
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {field: {"type": "string"} for field in target_schema.__fields__.keys()}
+                    }
+                }
+            }
+        }
+        
+        chain = create_extraction_chain(schema, self.model)
         result = chain.invoke({"input": self.resume})
         end = time.time()
         seconds = end - start
@@ -153,10 +165,14 @@ class ResumeManager:
             output, seconds = self.extract_pydantic(Education)
             logger.debug(f"# Education Extract:\n{output}")
             logger.info(f"# Education Extraction took {seconds} seconds")
-            self.output['education'] = [json.loads(x.json().encode('utf-8')) for x in output]
+            # Extract the actual data from the result
+            if 'data' in output:
+                self.output['education'] = output['data']
+            else:
+                self.output['education'] = []
 
-        except openai.APITimeoutError:
-            logger.warning("Education extraction timed out")
+        except (openai.APITimeoutError, Exception) as e:
+            logger.warning(f"Education extraction failed: {e}")
             query = fallback_education_prompt.format(resume=self.resume)
             output, seconds = self.query_model(query, json_mode=False)
             logger.debug(f"# Education Extract:\n{output}")
@@ -168,9 +184,13 @@ class ResumeManager:
             output, seconds = self.extract_pydantic(WorkExperience)
             logger.debug(f"# Work Experience Extract:\n{output}")
             logger.info(f"# Work Experience Extraction took {seconds} seconds")
-            self.output['work_output'] = [json.loads(x.json().encode('utf-8')) for x in output]
-        except openai.APITimeoutError:
-            logger.warning("Work extraction timed out")
+            # Extract the actual data from the result
+            if 'data' in output:
+                self.output['work_output'] = output['data']
+            else:
+                self.output['work_output'] = []
+        except (openai.APITimeoutError, Exception) as e:
+            logger.warning(f"Work extraction failed: {e}")
             self.fallback_extract_work_experience()
 
     def fallback_extract_work_experience(self):
