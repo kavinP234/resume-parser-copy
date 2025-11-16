@@ -15,11 +15,12 @@ from openai import OpenAI
 
 import threading
 
-from pydantic_models_prompts import Education, WorkExperience
 from pydantic_models_prompts import (
-    basic_details_prompt, fallback_basic_info_prompt,
-    skills_prompt, fallback_skills_prompt,
-    fallback_education_prompt, companies_prompt, work_experience_prompt
+    BasicInfo, WorkExperience, Education, Skills,
+    create_basic_details_prompt, create_skills_prompt,
+    create_work_experience_prompt, create_education_prompt,
+    fallback_basic_info_prompt, fallback_skills_prompt,
+    fallback_education_prompt, companies_prompt
 )
 from utils import extract_emails, extract_github_and_linkedin_urls
 from utils import output_template
@@ -61,12 +62,25 @@ class ResumeManager:
         """Extract structured data using OpenAI with JSON mode"""
         start = time.time()
         
+        # Get schema fields
+        schema_fields = list(target_schema.__fields__.keys())
+        
         # Create a schema description for the AI
         schema_description = f"""
-        Extract information and return as a JSON array of objects with the following fields:
-        {', '.join(target_schema.__fields__.keys())}
+        Extract information from the resume and return as a JSON array of objects.
+        Each object should have these fields: {', '.join(schema_fields)}
         
-        Each object should represent one entry (education or work experience).
+        Return format:
+        {{
+            "data": [
+                {{
+                    "{schema_fields[0]}": "value1",
+                    "{schema_fields[1]}": "value2",
+                    ...
+                }},
+                ...
+            ]
+        }}
         """
         
         prompt = f"""
@@ -75,7 +89,7 @@ class ResumeManager:
         Resume Content:
         {self.resume}
         
-        Return only valid JSON array.
+        Extract all relevant entries and return only valid JSON.
         """
         
         try:
@@ -86,7 +100,7 @@ class ResumeManager:
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                timeout=10,
+                timeout=15,
             )
             
             result = completion.choices[0].message.content
@@ -94,8 +108,8 @@ class ResumeManager:
             
             # Convert to list of target schema objects
             extracted_data = []
-            if isinstance(parsed_result, list):
-                for item in parsed_result:
+            if 'data' in parsed_result and isinstance(parsed_result['data'], list):
+                for item in parsed_result['data']:
                     try:
                         # Create instance of the target schema
                         obj = target_schema(**item)
@@ -103,8 +117,8 @@ class ResumeManager:
                     except Exception as e:
                         logger.warning(f"Failed to parse item: {item}, error: {e}")
                         continue
-            elif isinstance(parsed_result, dict):
-                # Handle case where result is a dict with a list inside
+            else:
+                # Try to find any array in the result
                 for key, value in parsed_result.items():
                     if isinstance(value, list):
                         for item in value:
@@ -114,7 +128,6 @@ class ResumeManager:
                             except Exception as e:
                                 logger.warning(f"Failed to parse item: {item}, error: {e}")
                                 continue
-                        break
             
             end = time.time()
             seconds = end - start
@@ -156,15 +169,15 @@ class ResumeManager:
             return "{}" if json_mode else "", seconds
 
     def extract_basic_info(self):
-        query = basic_details_prompt.format(resume=self.resume)
-        output, seconds = self.query_model(query)
-        
         try:
+            query = create_basic_details_prompt(self.resume)
+            output, seconds = self.query_model(query)
+            
             output_json = json.loads(output)
             logger.debug(f"# Basic Info Extract:\n{output_json}")
             logger.info(f"# Basic Info Extraction took {seconds} seconds")
 
-            # Extract basic info with fallbacks
+            # Extract basic info
             self.output['candidate_name'] = output_json.get('name', '')
             self.output['job_title'] = output_json.get('job_title', '')
             self.output['bio'] = output_json.get('bio', '')
@@ -177,6 +190,9 @@ class ResumeManager:
                 
         except json.JSONDecodeError:
             logger.warning("Basic info extraction returned invalid JSON, using fallback")
+            self.fallback_basic_info()
+        except Exception as e:
+            logger.error(f"Basic info extraction error: {e}")
             self.fallback_basic_info()
 
         # Always extract emails and URLs directly from text
@@ -201,7 +217,7 @@ class ResumeManager:
 
     def extract_skills(self):
         try:
-            query = skills_prompt.format(resume=self.resume)
+            query = create_skills_prompt(self.resume)
             output, seconds = self.query_model(query)
             output_json = json.loads(output)
             
@@ -281,10 +297,10 @@ class ResumeManager:
             thread.join()
 
     def get_intermediary_work_experience(self, company_name, role):
-        query = work_experience_prompt.format(resume=self.resume, role=role, company=company_name)
-        output, seconds = self.query_model(query, json_mode=True)
-        
         try:
+            query = create_work_experience_prompt(company_name, role, self.resume)
+            output, seconds = self.query_model(query, json_mode=True)
+            
             parsed_output = json.loads(output)
             logger.debug(f"# Intermediary Work Experience Extract:\n{parsed_output}")
             logger.info(f"# Intermediary Work Experience Extraction took {seconds} seconds")
@@ -292,30 +308,39 @@ class ResumeManager:
             self.output['work_output'].append(parsed_output)
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse work experience for {company_name}: {e}")
+        except Exception as e:
+            logger.error(f"Error getting work experience for {company_name}: {e}")
 
 
 def get_resume_content(file_path, extension=None):
+    """
+    Extract text content from resume file (PDF or DOCX)
+    """
     if not extension:
         extension = os.path.splitext(file_path)[1]
         
-    if extension == '.pdf':
-        pdf_reader = PdfReader(file_path)
-        content = ""
-        for page in pdf_reader.pages:
-            text = page.extract_text()
-            if text:
-                content += text + "\n"
-                
-    elif extension in ['.docx', '.doc']:
-        doc = docx.Document(file_path)
-        content = ""
-        for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                content += paragraph.text + "\n"
-
-    else:
-        sys.exit(f"Unsupported file type {extension}")
-        
+    content = ""
+    
+    try:
+        if extension.lower() == '.pdf':
+            pdf_reader = PdfReader(file_path)
+            for page in pdf_reader.pages:
+                text = page.extract_text()
+                if text:
+                    content += text + "\n"
+                    
+        elif extension.lower() in ['.docx', '.doc']:
+            doc = docx.Document(file_path)
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    content += paragraph.text + "\n"
+        else:
+            raise ValueError(f"Unsupported file type: {extension}")
+            
+    except Exception as e:
+        logger.error(f"Error reading file {file_path}: {e}")
+        raise
+    
     return content.strip()
 
 
@@ -326,6 +351,11 @@ if __name__ == "__main__":
                         help="Name of the model, default to gpt-3.5-turbo-1106")
 
     args = parser.parse_args()
+    
+    if not os.path.exists(args.file_path):
+        logger.error(f"File not found: {args.file_path}")
+        sys.exit(1)
+        
     logging.info(f"Processing {args.file_path}")
 
     resume_manager = ResumeManager(args.file_path, args.model_name)
@@ -340,8 +370,8 @@ if __name__ == "__main__":
     # Create directory if it doesn't exist
     os.makedirs("parsed_outputs", exist_ok=True)
     
-    with open(output_file_path, 'w') as file:
-        json.dump(resume_manager.output, file, indent=2)
+    with open(output_file_path, 'w', encoding='utf-8') as file:
+        json.dump(resume_manager.output, file, indent=2, ensure_ascii=False)
 
     print(json.dumps(resume_manager.output, indent=2))
 
