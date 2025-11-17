@@ -1,49 +1,4 @@
 import streamlit as st
-import nltk
-import ssl
-import os
-
-# Fix SSL certificate issues
-try:
-    _create_unverified_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
-else:
-    ssl._create_default_https_context = _create_unverified_https_context
-
-# Set NLTK data path to a permanent location
-@st.cache_resource
-def setup_nltk():
-    # Create a permanent directory for NLTK data
-    nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
-    os.makedirs(nltk_data_dir, exist_ok=True)
-    
-    # Add to NLTK path
-    nltk.data.path.append(nltk_data_dir)
-    
-    # Download required datasets
-    required_datasets = {
-        'punkt': 'tokenizers/punkt',
-        'stopwords': 'corpora/stopwords',
-        'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
-        'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
-        'words': 'corpora/words'
-    }
-    
-    for dataset_name, dataset_path in required_datasets.items():
-        try:
-            # Check if already downloaded
-            nltk.data.find(dataset_path)
-        except LookupError:
-            try:
-                st.info(f"📥 Downloading NLTK {dataset_name}...")
-                nltk.download(dataset_name, download_dir=nltk_data_dir, quiet=False)
-                st.success(f"✅ {dataset_name} downloaded")
-            except Exception as e:
-                st.warning(f"⚠️ Failed to download {dataset_name}: {e}")
-
-# Initialize NLTK
-setup_nltk()
 import pandas as pd
 import json
 import re
