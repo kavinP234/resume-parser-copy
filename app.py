@@ -1,4 +1,49 @@
 import streamlit as st
+import nltk
+import ssl
+import os
+
+# Fix SSL certificate issues
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# Set NLTK data path to a permanent location
+@st.cache_resource
+def setup_nltk():
+    # Create a permanent directory for NLTK data
+    nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
+    os.makedirs(nltk_data_dir, exist_ok=True)
+    
+    # Add to NLTK path
+    nltk.data.path.append(nltk_data_dir)
+    
+    # Download required datasets
+    required_datasets = {
+        'punkt': 'tokenizers/punkt',
+        'stopwords': 'corpora/stopwords',
+        'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger',
+        'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
+        'words': 'corpora/words'
+    }
+    
+    for dataset_name, dataset_path in required_datasets.items():
+        try:
+            # Check if already downloaded
+            nltk.data.find(dataset_path)
+        except LookupError:
+            try:
+                st.info(f"📥 Downloading NLTK {dataset_name}...")
+                nltk.download(dataset_name, download_dir=nltk_data_dir, quiet=False)
+                st.success(f"✅ {dataset_name} downloaded")
+            except Exception as e:
+                st.warning(f"⚠️ Failed to download {dataset_name}: {e}")
+
+# Initialize NLTK
+setup_nltk()
 import pandas as pd
 import json
 import re
@@ -46,6 +91,13 @@ st.markdown("""
         border-radius: 0.3rem;
         margin: 1rem 0;
         font-weight: bold;
+    }
+    .warning-box {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -193,6 +245,14 @@ def parse_resume_manual(text: str) -> Dict[str, Any]:
 def try_pyresparser(file_path: str) -> Dict[str, Any]:
     """Try parsing with pyresparser if available"""
     try:
+        # Ensure NLTK data is available
+        try:
+            from nltk.corpus import stopwords
+            stopwords.words('english')
+        except LookupError:
+            st.warning("NLTK data not available. Using manual parsing.")
+            return {}
+            
         from pyresparser import ResumeParser
         data = ResumeParser(file_path).get_extracted_data()
         
@@ -245,9 +305,11 @@ def parse_resume(file_path: str, file_type: str) -> Dict[str, Any]:
     pyres_data = try_pyresparser(file_path)
     if pyres_data and pyres_data.get('candidate_name'):
         parsed_data = pyres_data
+        parsing_method = "pyresparser"
     else:
         # Method 2: Use manual parsing
         parsed_data = parse_resume_manual(text)
+        parsing_method = "manual"
     
     # Calculate parsing time
     parsing_time = (datetime.now() - start_time).total_seconds()
@@ -257,7 +319,7 @@ def parse_resume(file_path: str, file_type: str) -> Dict[str, Any]:
         "parsing_time_seconds": round(parsing_time, 2),
         "file_type": file_type,
         "text_length": len(text),
-        "parsing_method": "pyresparser" if pyres_data and pyres_data.get('candidate_name') else "manual"
+        "parsing_method": parsing_method
     }
     
     return parsed_data
@@ -270,7 +332,9 @@ def display_parsed_data(data: Dict[str, Any]):
     
     # Success message with parsing time
     parsing_time = data.get("parsing_metadata", {}).get("parsing_time_seconds", 0)
-    st.markdown(f'<div class="success-box">✅ Resume parsed successfully in {parsing_time} seconds!</div>', unsafe_allow_html=True)
+    parsing_method = data.get("parsing_metadata", {}).get("parsing_method", "unknown")
+    
+    st.markdown(f'<div class="success-box">✅ Resume parsed successfully in {parsing_time} seconds! (Method: {parsing_method})</div>', unsafe_allow_html=True)
     
     # Create columns for layout
     col1, col2 = st.columns([1, 1])
@@ -371,6 +435,15 @@ def main():
         3. Review extracted information
         4. Download results if needed
         """)
+        
+        # Show NLTK status
+        st.markdown('<div class="section-header">System Status</div>', unsafe_allow_html=True)
+        try:
+            from nltk.corpus import stopwords
+            stopwords.words('english')
+            st.success("✅ NLTK data loaded")
+        except:
+            st.warning("⚠️ Using fallback parsing")
     
     # File upload
     uploaded_file = st.file_uploader(
